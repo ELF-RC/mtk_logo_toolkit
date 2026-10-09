@@ -56,17 +56,17 @@ fn replace_cert2_blob(data: &[u8], c_blob_off: usize, c_off: usize, c_hdr: &mkim
     let new_dsz = new_blob.len();
     let old_padded = c_hdr.padded_data_size();
     let new_padded = mkimg::roundup(new_dsz, c_hdr.align_sz as usize);
-    let mut out = data.to_vec();
-    // Replace blob region
     let pad = new_padded - new_dsz;
     let mut padded_blob = new_blob.to_vec();
     padded_blob.extend(std::iter::repeat(0u8).take(pad));
-    // Ensure out is large enough
-    if out.len() < c_blob_off + old_padded {
-        // pad out if needed
-        out.resize(c_blob_off + old_padded, 0);
+    // Splice: replace [c_blob_off .. c_blob_off+old_padded] with padded_blob
+    let old_end = c_blob_off + old_padded;
+    let mut out = Vec::with_capacity(data.len() - old_padded + new_padded);
+    out.extend_from_slice(&data[..c_blob_off]);
+    out.extend_from_slice(&padded_blob);
+    if old_end < data.len() {
+        out.extend_from_slice(&data[old_end..]);
     }
-    out[c_blob_off..c_blob_off + old_padded].copy_from_slice(&padded_blob);
     // Update part_hdr.dsize at offset 4 from c_off
     out[c_off + 4..c_off + 8].copy_from_slice(&(new_dsz as u32).to_le_bytes());
     out
@@ -157,8 +157,8 @@ fn build_hash_override_block(header_digest: &[u8], image_digest: &[u8]) -> Vec<u
 }
 
 /// Verify that a fake cert is installed and hashes match current image content.
-pub fn verify_image(data: &[u8]) -> anyhow::Result<()> {
-    println!("Image: {} bytes", data.len());
+pub fn verify_image(data: &[u8], image_name: &str) -> anyhow::Result<()> {
+    println!("Image: {}  Size: {} bytes", image_name, data.len());
     let parts = mkimg::parse_parts(data);
     if parts.is_empty() {
         println!("[ERROR] no part_hdr_t headers found");

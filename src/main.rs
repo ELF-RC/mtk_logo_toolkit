@@ -106,7 +106,11 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Verify { image } => {
             let data = std::fs::read(&image)?;
-            cert::verify_image(&data)?;
+            let image_name = std::path::Path::new(&image)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(image);
+            cert::verify_image(&data, &image_name)?;
         }
     }
 
