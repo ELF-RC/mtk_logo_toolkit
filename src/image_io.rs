@@ -29,14 +29,10 @@ pub fn lookup_size(byte_len: usize) -> Option<(u32, u32)> {
 }
 
 /// Load an image and return (width, height, RGBA bytes).
+/// Handles all formats supported by the `image` crate (PNG, JPEG, GIF, BMP,
+/// TGA, PNM, WebP). For raw .rgba files, the caller reads them directly
+/// without going through this function.
 pub fn load_image(path: &Path) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    // Try .rgba first
-    if path.extension().and_then(|e| e.to_str()) == Some("rgba") {
-        let data = std::fs::read(path)?;
-        // We don't know dimensions from raw rgba alone; caller handles this
-        // by not going through load_image for .rgba files
-        return Ok((0, 0, data));
-    }
     let img = image::open(path)
         .map_err(|e| anyhow::anyhow!("failed to decode image {}: {}", path.display(), e))?;
     let rgba = img.to_rgba8();

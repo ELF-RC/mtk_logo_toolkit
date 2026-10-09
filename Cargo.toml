@@ -7,6 +7,6 @@ edition = "2024"
 clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 flate2 = "1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tga", "pnm"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tga", "pnm", "webp"] }
 anyhow = "1"
 hex = "0.4"
