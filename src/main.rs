@@ -6,8 +6,9 @@ mod cert_inject;
 
 use std::path::Path;
 use clap::{Parser, Subcommand};
+use cert_inject::BypassMode;
 
-const VERSION: &str = "1.4-dev";
+const VERSION: &str = "1.5-dev";
 
 /// MTK logo image toolchain: unpack / pack / install / build / verify
 #[derive(Parser)]
@@ -37,13 +38,19 @@ enum Commands {
         #[arg(short = 'o', long)]
         out: Option<String>,
     },
-    /// Inject legacy fake cert into an image (bypass_mode=1)
+    /// Inject fake cert into an image (default: legacy bypass_mode=1)
     Install {
         /// Input image file
         image: String,
         /// Output file (default <input>.signed)
         #[arg(short = 'o', long)]
         out: Option<String>,
+        /// Use modern bypass (CVE-2025-20730): inject 0xA0 into root SEQUENCE
+        #[arg(long)]
+        modern: bool,
+        /// Use legacy bypass (CVE-2023-20696): BIT STRING wrapper (default)
+        #[arg(long)]
+        legacy: bool,
     },
     /// Pack + install in one step (ready-to-flash)
     Build {
@@ -54,12 +61,27 @@ enum Commands {
         /// Output file (default <template>.signed)
         #[arg(short = 'o', long)]
         out: Option<String>,
+        /// Use modern bypass (default: legacy)
+        #[arg(long)]
+        modern: bool,
+        /// Use legacy bypass (default)
+        #[arg(long)]
+        legacy: bool,
     },
-    /// Verify fake cert is successfully installed and hashes match
+    /// Verify fake cert is successfully installed and hashes match (auto-detect mode)
     Verify {
         /// Input image file
         image: String,
     },
+}
+
+fn resolve_mode(modern: bool, _legacy: bool) -> BypassMode {
+    if modern {
+        BypassMode::Modern
+    } else {
+        // default to legacy; --legacy is accepted but redundant
+        BypassMode::Legacy
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -87,18 +109,20 @@ fn main() -> anyhow::Result<()> {
             println!("[OK] written: {} ({} bytes)", out_path, packed.len());
             println!("Next: sign with  mtk-logo-toolkit install {}", out_path);
         }
-        Commands::Install { image, out } => {
+        Commands::Install { image, out, modern, legacy } => {
+            let mode = resolve_mode(modern, legacy);
             let data = std::fs::read(&image)?;
-            let signed = cert_inject::inject_fake_cert(&data)?;
+            let signed = cert_inject::inject_fake_cert(&data, mode)?;
             let default_out = format!("{}.signed", image);
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &signed)?;
             println!("[OK] written: {}", out_path);
         }
-        Commands::Build { dir, template, out } => {
+        Commands::Build { dir, template, out, modern, legacy } => {
+            let mode = resolve_mode(modern, legacy);
             let packed = logo_payload::pack_logo(Path::new(&dir), Path::new(&template))?;
             println!();
-            let signed = cert_inject::inject_fake_cert(&packed)?;
+            let signed = cert_inject::inject_fake_cert(&packed, mode)?;
             let default_out = format!("{}.signed", template);
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &signed)?;

@@ -318,16 +318,24 @@ pub fn find_original_cert2_sequence(der: &[u8]) -> anyhow::Result<(&[u8], usize)
     anyhow::bail!("original CERT2 DER SEQUENCE (0x30) not found")
 }
 
-/// Strip any legacy wrapper prefix (BIT STRING + 0xA0 override block)
-/// prepended by a previous `install`, making re-install idempotent.
-pub fn strip_legacy_wrapper(der: &[u8]) -> &[u8] {
+/// Strip any previous injection's prefix, making re-install idempotent.
+///
+/// Handles two cases:
+/// 1. **Legacy BIT STRING wrapper**: top-level BIT STRING → strip it, then
+///    continue stripping any following 0xA0 blocks.
+/// 2. **Top-level 0xA0 override** (modern sibling): strip it, then continue
+///    to check if there's a BIT STRING or another 0xA0 after it.
+///
+/// Both cases are handled by the same loop since both are top-level TLVs.
+/// Returns a sub-slice of the input (zero-copy).
+pub fn strip_injection(der: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let mut data = der;
     loop {
         let first = match parse_first_tlv(data) {
             Some(f) => f,
             None => break,
         };
-        let is_bit_string = first.0 == 0 && first.2 == 3;     // universal BIT STRING
+        let is_bit_string = first.0 == 0 && first.2 == 3;          // universal BIT STRING
         let is_override   = first.0 == 2 && first.1 && first.2 == 0; // ctx constructed tag 0
         if is_bit_string || is_override {
             data = &data[first.4..];
@@ -335,5 +343,5 @@ pub fn strip_legacy_wrapper(der: &[u8]) -> &[u8] {
             break;
         }
     }
-    data
+    std::borrow::Cow::Borrowed(data)
 }

