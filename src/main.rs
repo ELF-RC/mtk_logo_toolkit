@@ -1,8 +1,8 @@
-mod mkimg;
-mod der;
-mod image_io;
-mod logo;
-mod cert;
+mod part_header;
+mod asn1_der;
+mod image_codec;
+mod logo_payload;
+mod cert_inject;
 
 use std::path::Path;
 use clap::{Parser, Subcommand};
@@ -76,11 +76,11 @@ fn main() -> anyhow::Result<()> {
 
     match cmd {
         Commands::Unpack { image, out } => {
-            logo::unpack_image(Path::new(&image), out.as_deref())?;
+            logo_payload::unpack_logo(Path::new(&image), out.as_deref())?;
         }
         Commands::Pack { dir, template, out } => {
             let template_path = Path::new(&template);
-            let packed = logo::pack_image(Path::new(&dir), template_path)?;
+            let packed = logo_payload::pack_logo(Path::new(&dir), template_path)?;
             let default_out = format!("{}.packed", template);
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &packed)?;
@@ -89,16 +89,16 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Install { image, out } => {
             let data = std::fs::read(&image)?;
-            let signed = cert::install_image(&data)?;
+            let signed = cert_inject::inject_fake_cert(&data)?;
             let default_out = format!("{}.signed", image);
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &signed)?;
             println!("[OK] written: {}", out_path);
         }
         Commands::Build { dir, template, out } => {
-            let packed = logo::pack_image(Path::new(&dir), Path::new(&template))?;
+            let packed = logo_payload::pack_logo(Path::new(&dir), Path::new(&template))?;
             println!();
-            let signed = cert::install_image(&packed)?;
+            let signed = cert_inject::inject_fake_cert(&packed)?;
             let default_out = format!("{}.signed", template);
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &signed)?;
@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or(image);
-            cert::verify_image(&data, &image_name)?;
+            cert_inject::verify_fake_cert(&data, &image_name)?;
         }
     }
 
