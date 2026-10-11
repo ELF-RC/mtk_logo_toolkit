@@ -111,67 +111,20 @@ src/
 
 ### Image Structure
 
-A `logo.bin` file is a linear chain of `part_hdr_t` partitions. Each partition has a 512-byte header (80 bytes of fields + 432 bytes of zero padding) followed by the partition data, padded to the alignment boundary.
+A `logo.bin` file is a linear chain of `part_hdr_t` partitions. Each partition starts with a 512-byte header (magic `0x58881688`) followed by its data, padded to the alignment boundary. A typical image contains three partitions:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Partition 0 (logo)                                           │
-│  ┌──────────────────┐  ┌──────────────────────────────────┐  │
-│  │  part_hdr_t (512B) │  │  zlib-compressed logo payload   │  │
-│  └──────────────────┘  └──────────────────────────────────┘  │
-│  ←─── padding to align_sz boundary ───→                       │
-├──────────────────────────────────────────────────────────────┤
-│  Partition 1 (cert1)                                          │
-│  ┌──────────────────┐  ┌──────────────────────────────────┐  │
-│  │  part_hdr_t (512B) │  │  CERT1 DER blob                 │  │
-│  └──────────────────┘  └──────────────────────────────────┘  │
-├──────────────────────────────────────────────────────────────┤
-│  Partition 2 (cert2)                                          │
-│  ┌──────────────────┐  ┌──────────────────────────────────┐  │
-│  │  part_hdr_t (512B) │  │  CERT2 DER blob                 │  │
-│  └──────────────────┘  └──────────────────────────────────┘  │
-│  is_list_end = 1 (last partition)                             │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### part_hdr_t Header Layout (80 bytes core, 512 bytes total)
-
-| Offset | Size | Field | Description |
-|--------|------|-------|-------------|
-| 0 | 4 | `magic` | `0x58881688` — identifies a valid header |
-| 4 | 4 | `dsize` | Unpadded data size in bytes |
-| 8 | 32 | `name` | Partition name, NUL-terminated (e.g. `"logo"`, `"cert2"`) |
-| 40 | 4 | `maddr` | Load address (informational) |
-| 44 | 4 | `mode` | Mode flags (informational) |
-| 48 | 4 | `ext_magic` | Extended magic `0x58891689` |
-| 52 | 4 | `hdr_sz` | Header size (always 512) |
-| 56 | 4 | `hdr_ver` | Header version (typically 1) |
-| 60 | 4 | `img_type` | Image type (`0x00000000`=logo, `0x02000000`=cert1, `0x02000002`=cert2) |
-| 64 | 4 | `is_list_end` | Non-zero marks the last header in the chain |
-| 68 | 4 | `align_sz` | Data alignment boundary (typically 16) |
-| 72 | 4 | `dsize_ext` | Upper 32 bits of data size (always 0 for <4 GiB) |
-| 76 | 4 | `maddr_ext` | Upper 32 bits of load address (always 0) |
-
-Bytes 80–511 are zero-padding. The padded data size is `round_up(dsize, align_sz)`.
+| Partition | Content | `img_type` |
+|-----------|---------|-------------|
+| `logo` | zlib-compressed logo chunks (BGRA32 pixel data) | `0x00000000` |
+| `cert1` | ASN.1 DER certificate blob (RSA-PSS signature) | `0x02000000` |
+| `cert2` | ASN.1 DER certificate blob (image hashes + signature) | `0x02000002` |
 
 ### Logo Payload Structure
 
-The `logo` partition's data (`dsize` bytes) has this internal layout:
+The `logo` partition's data has this internal layout:
 
 ```
-┌────────────────────────────────────────────────────┐
-│  Payload Header                                    │
-│  ┌───────────┬───────────┬──────────────────────┐ │
-│  │ count:u32  │ total:u32 │ offsets:u32 × count │ │
-│  └───────────┴───────────┴──────────────────────┘ │
-│  Header size = 8 + count × 4 bytes                 │
-├────────────────────────────────────────────────────┤
-│  Chunk Data                                        │
-│  ┌──────────┬──────────┬─────┬──────────┐         │
-│  │ chunk[0] │ chunk[1] │ ... │ chunk[N] │         │
-│  └──────────┴──────────┴─────┴──────────┘         │
-│  Each chunk = one zlib-compressed BGRA block       │
-└────────────────────────────────────────────────────┘
+[count: u32] [total: u32] [offsets: u32 × count] [zlib BGRA blocks...]
 ```
 
 - **`count`** (u32 LE) — number of logo chunks
@@ -181,74 +134,28 @@ The `logo` partition's data (`dsize` bytes) has this internal layout:
 
 ### Color Mode: BGRA32
 
-All pixel data is stored in **BGRA32** format (also called BGRA8888):
-
-| Byte offset | Channel | Bits |
-|-------------|---------|------|
-| 0 | Blue | 8 |
-| 1 | Green | 8 |
-| 2 | Red | 8 |
-| 3 | Alpha | 8 |
-
-This is the native pixel format used by modern MTK bootloaders (MT6765 and newer). Each pixel occupies 4 bytes; a 1080×2340 image requires 10,108,800 bytes of raw BGRA data.
+All pixel data is stored in **BGRA32** format (4 bytes/pixel): Blue, Green, Red, Alpha — each 8 bits. This is the native format used by modern MTK bootloaders (MT6765 and newer).
 
 > **Note:** Older MTK devices (MT6580/MT6739 and earlier) use **RGB565** (2 bytes/pixel, R5G6B5). This tool does not currently support RGB565.
 
 ### Compression: zlib Level 9
 
-Each logo chunk is independently compressed with **zlib deflate at level 9** (best compression). The standard MTK build pipeline uses `zpipe -l 9`, which corresponds to the same level. The Rust implementation uses `flate2` with `Compression::best()` (= level 9).
-
-Logo images are highly compressible due to solid-color backgrounds and simple graphics. Typical compression ratios:
-
-| Chunk Type | Decompressed Size | Compressed Size | Ratio |
-|------------|-------------------|------------------|-------|
-| Full-screen logo (1080×2340) | 10,108,800 bytes | ~18,000 bytes | ~0.18% |
-| Boot logo (178×350) | 249,200 bytes | ~4,600 bytes | ~1.8% |
-| Progress bar (263×2) | 2,104 bytes | ~150 bytes | ~7% |
+Each logo chunk is independently compressed with **zlib deflate at level 9** (best compression), matching the standard MTK build pipeline (`zpipe -l 9`). Logo images are highly compressible due to solid-color backgrounds and simple graphics — typical compression ratios are under 2%.
 
 ### Resolution Fitting
 
 When an input image does not match the target chunk resolution, it is adapted using **center-crop + black-pad** (no scaling):
 
-1. The source image is decoded to RGBA
+1. Decode the source image to RGBA
 2. If larger than target: center-crop to `target_w × target_h`
-3. If smaller than target: center on a canvas of `target_w × target_h`, padded with opaque black (B=0, G=0, R=0, A=255)
-4. RGBA is converted to BGRA and compressed
+3. If smaller than target: center on a `target_w × target_h` canvas, padded with opaque black (B=0, G=0, R=0, A=255)
+4. Convert RGBA → BGRA and compress
 
-This guarantees that every chunk's decompressed size is exactly `target_w × target_h × 4`, regardless of input image dimensions.
+This guarantees every chunk's decompressed size is exactly `target_w × target_h × 4`.
 
 ### CERT2 Bypass Mechanism
 
 The CERT2 blob is an ASN.1 DER-encoded certificate containing image header hash and image content hash fields (identified by OIDs `2.16.886.2454.2.4` and `2.16.886.2454.2.1`). The injection prepends a crafted `0xA0` block containing OID + BIT STRING pairs with recomputed hashes for the current image content, causing the preloader's DER parser to read the injected hashes instead of the original ones.
-
-### Example: Real logo.bin Breakdown
-
-Below is a real-world `logo.bin` from a Cannon MTK device:
-
-```
-Total image size: 1,294,976 bytes (1.23 MB)
-
-Partitions (3):
-  [0] logo      dsize=1,290,753  padded=1,290,768  img_type=0x00000000  align=16
-  [1] cert1     dsize=     1,709  padded=     1,712  img_type=0x02000000  align=16
-  [2] cert2     dsize=       957  padded=       960  img_type=0x02000002  align=16
-
-Logo payload:
-  Chunks:               42
-  Payload header:       176 bytes (8 + 42×4)
-  Total compressed:     1,290,577 bytes
-  Total decompressed:   243,666,816 bytes (232.5 MB)
-  Compression ratio:    0.53%
-
-Unique chunk sizes (decompressed):
-    2,104 bytes  →  263×2     (progress bar)
-   11,520 bytes  →  45×64     (small icon)
-   14,592 bytes  →  57×64     (medium icon)
-   36,864 bytes  →  72×128    (small icon)
-   49,444 bytes  →  263×47    (fastboot logo)
-  249,200 bytes  →  178×350   (boot logo)
-10,108,800 bytes  →  1080×2340 (full-screen logo, ×2 chunks)
-```
 
 ## Known Resolutions
 
