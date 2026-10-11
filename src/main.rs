@@ -10,9 +10,23 @@ use cert_inject::BypassMode;
 
 const VERSION: &str = "1.5-dev";
 
+/// Returns the program basename from argv[0], for use in help hints.
+fn prog_name() -> String {
+    std::env::args()
+        .next()
+        .as_deref()
+        .map(|s| {
+            std::path::Path::new(s)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| s.to_string())
+        })
+        .unwrap_or_else(|| "mtk-logo-toolkit".to_string())
+}
+
 /// MTK logo image toolchain: unpack / pack / install / build / verify
 #[derive(Parser)]
-#[command(name = "mtk-logo-toolkit", version = VERSION)]
+#[command(version = VERSION)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Commands>,
@@ -107,7 +121,7 @@ fn main() -> anyhow::Result<()> {
             let out_path = out.as_deref().unwrap_or(&default_out);
             std::fs::write(out_path, &packed)?;
             println!("[OK] written: {} ({} bytes)", out_path, packed.len());
-            println!("Next: sign with  mtk-logo-toolkit install {}", out_path);
+            println!("Next: sign with  {} install {}", prog_name(), out_path);
         }
         Commands::Install { image, out, modern, legacy } => {
             let mode = resolve_mode(modern, legacy);
