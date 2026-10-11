@@ -134,6 +134,8 @@ The CERT2 blob is an ASN.1 DER-encoded certificate containing image header hash 
 |-------|------------|-----------|
 | 10,368,000 | 1080×2400 | FHD+ phone |
 | 10,108,800 | 1080×2340 | FHD+ phone |
+| 4,608,000 | 720×1600 | HD+ phone |
+| 3,686,400 | 720×1280 | HD phone |
 | 249,200 | 178×350 | Boot logo |
 | 49,444 | 263×47 | Fastboot logo |
 | 36,864 | 72×128 | Small icon |
