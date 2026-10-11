@@ -1,0 +1,37 @@
+mtk-logo-toolkit
+Copyright (C) 2025 ELF-RC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+=======================================================================
+
+ACKNOWLEDGMENTS
+
+This project incorporates concepts and logic inspired by the following
+projects:
+
+  pwnage24mtk
+    URL: https://github.com/kasnria001/pwnage24mtk
+    Author: kasnria001
+    Used: CERT2 fake certificate injection logic (legacy bypass_mode=1
+          and modern 0xA0 hash override), part_hdr_t parsing structure,
+          and ASN.1 DER traversal approach.
+    Note: This is an independent Rust implementation, not a translation
+          of the original Python source code.
+
+  cannon_logo_maker
+    URL: https://github.com/ELF-RC/cannon_logo_maker
+    Author: ELF-RC (same author as this project)
+    Used: Logo unpack/pack pipeline, image format handling, and
+          resolution fitting logic.

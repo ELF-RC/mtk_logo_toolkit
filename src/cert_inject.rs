@@ -14,6 +14,11 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// ACKNOWLEDGMENT: The CERT2 fake certificate injection logic (both legacy
+// bypass_mode=1 and modern 0xA0 override) is inspired by the pwnage24mtk
+// project (https://github.com/kasnria001/pwnage24mtk). This implementation
+// is an independent Rust rewrite, not a derivative translation.
 
 //! CERT2 fake certificate injection and verification.
 //!
