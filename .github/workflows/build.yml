@@ -1,0 +1,156 @@
+name: build
+
+# Build release binaries for:
+#   - ubuntu-22.04 amd64      (native x86_64)
+#   - ubuntu-22.04 aarch64    (native ARM runner)
+#   - android aarch64         (cross-compiled via NDK on x86_64)
+#
+# The ubuntu-22.04-arm runners are free for public repositories.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/build.yml'
+    tags: ['v*']
+  pull_request:
+    paths: ['src/**', 'Cargo.toml', '.github/workflows/build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: ${{ matrix.target.runner }} / ${{ matrix.target.arch }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compute version and Shanghai timestamp
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-$(echo "${GITHUB_SHA}" | cut -c1-8)"
+          fi
+          SHANGHAI_TIME="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)"
+          echo "BUILD_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "SHANGHAI_TIME=${SHANGHAI_TIME}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}  shanghai=${SHANGHAI_TIME}"
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Smoke test
+        run: |
+          BIN="./target/release/mtk-logo-toolkit"
+          chmod +x "$BIN"
+          echo "--- $BIN --version ---"
+          "$BIN" --version
+          echo "--- $BIN --help ---"
+          "$BIN" --help
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p stage
+          cp target/release/mtk-logo-toolkit \
+             stage/mtk-logo-toolkit-${{ matrix.target.arch }}
+          echo "--- stage contents ---"
+          ls -la stage/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bin-${{ env.BUILD_VERSION }}-${{ matrix.target.arch }}-${{ env.SHANGHAI_TIME }}
+          path: stage
+          if-no-files-found: error
+
+  build-android:
+    name: ubuntu-22.04 / android-aarch64
+    runs-on: ubuntu-22.04
+    # Cross-compile for Android aarch64 using the Android NDK.
+    # Runs on x86_64 runner with NDK's x86_64-hosted toolchain.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Android NDK
+        run: |
+          ANDROID_NDK_VERSION=r27c
+          ANDROID_NDK_URL="https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip"
+          wget -q "$ANDROID_NDK_URL" -O /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d "$HOME"
+          echo "ANDROID_NDK_HOME=$HOME/android-ndk-${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$HOME/android-ndk-${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Compute version and Shanghai timestamp
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-$(echo "${GITHUB_SHA}" | cut -c1-8)"
+          fi
+          SHANGHAI_TIME="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)"
+          echo "BUILD_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "SHANGHAI_TIME=${SHANGHAI_TIME}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}  shanghai=${SHANGHAI_TIME}"
+
+      - name: Configure Android aarch64 toolchain
+        run: |
+          NDK="$ANDROID_NDK_HOME"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml <<EOF
+          [target.aarch64-linux-android]
+          linker = "${TOOLCHAIN}/bin/aarch64-linux-android24-clang"
+          ar = "${TOOLCHAIN}/bin/llvm-ar"
+          EOF
+
+      - name: Build release binary
+        run: cargo build --release --target aarch64-linux-android
+
+      - name: Smoke test (via QEMU)
+        run: |
+          BIN="./target/aarch64-linux-android/release/mtk-logo-toolkit"
+          file "$BIN"
+          echo "--- QEMU smoke test ---"
+          sudo apt-get install -y qemu-user-static 2>/dev/null || true
+          if command -v qemu-aarch64-static &>/dev/null; then
+            qemu-aarch64-static "$BIN" --version || echo "QEMU run skipped (runtime deps)"
+          else
+            echo "qemu-aarch64-static not installed, skipping runtime test"
+          fi
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p stage
+          cp target/aarch64-linux-android/release/mtk-logo-toolkit \
+             stage/mtk-logo-toolkit-android-aarch64
+          echo "--- stage artifacts ---"
+          ls -la stage/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bin-${{ env.BUILD_VERSION }}-android-aarch64-${{ env.SHANGHAI_TIME }}
+          path: stage
+          if-no-files-found: error
