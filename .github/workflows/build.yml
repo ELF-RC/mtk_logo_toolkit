@@ -5,8 +5,9 @@ name: build
 #   - ubuntu-22.04 aarch64    (native ARM runner)
 #   - android aarch64         (cross-compiled via NDK)
 #
-# All three targets are collected into a single zip artifact.
-# Build logs are captured regardless of success or failure.
+# Final output: a single artifact named MLK-<version> containing all binaries
+# at the root and build logs under logs/.
+# Intermediate build artifacts are deleted after collection.
 
 on:
   push:
@@ -42,7 +43,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Prepare directories
+      - name: Prepare
         run: |
           mkdir -p logs out
           echo "=== Build started: ${{ matrix.target.arch }} ===" > logs/build-${{ matrix.target.arch }}.log
@@ -60,7 +61,7 @@ jobs:
           echo "Version: ${VERSION}" >> logs/build-${{ matrix.target.arch }}.log
           echo "" >> logs/build-${{ matrix.target.arch }}.log
 
-      - name: Build release binary
+      - name: Build
         run: |
           set +e
           echo "=== cargo build --release ===" >> logs/build-${{ matrix.target.arch }}.log
@@ -82,19 +83,21 @@ jobs:
           echo "" >> logs/build-${{ matrix.target.arch }}.log
           echo "=== Smoke test ===" >> logs/build-${{ matrix.target.arch }}.log
           "$BIN" --version 2>&1 | tee -a logs/build-${{ matrix.target.arch }}.log
+          echo "" >> logs/build-${{ matrix.target.arch }}.log
           "$BIN" --help 2>&1 | tee -a logs/build-${{ matrix.target.arch }}.log
 
-      - name: Upload build artifact
+      - name: Upload intermediate
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.target.arch }}
+          name: tmp-build-${{ matrix.target.arch }}
           path: |
             out/
             logs/
           if-no-files-found: warn
+          retention-days: 1
 
-      - name: Mark job status
+      - name: Fail if build failed
         if: always()
         run: |
           if [ "${BUILD_EXIT}" != "0" ]; then
@@ -113,7 +116,7 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Prepare directories
+      - name: Prepare
         run: |
           mkdir -p logs out
           echo "=== Build started: android-aarch64 ===" > logs/build-android-aarch64.log
@@ -124,8 +127,8 @@ jobs:
         run: |
           ANDROID_NDK_VERSION=r27c
           echo "=== Installing Android NDK ${ANDROID_NDK_VERSION} ===" | tee -a logs/build-android-aarch64.log
-          wget -q "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -O /tmp/ndk.zip 2>&1 | tee -a logs/build-android-aarch64.log
-          unzip -q /tmp/ndk.zip -d "$HOME" 2>&1 | tee -a logs/build-android-aarch64.log
+          wget -q "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -O /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d "$HOME"
           echo "ANDROID_NDK_HOME=$HOME/android-ndk-${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$HOME/android-ndk-${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
 
@@ -150,7 +153,7 @@ jobs:
           ar = "${TOOLCHAIN}/bin/llvm-ar"
           EOF
 
-      - name: Build release binary
+      - name: Build
         run: |
           set +e
           echo "=== cargo build --release --target aarch64-linux-android ===" >> logs/build-android-aarch64.log
@@ -167,17 +170,18 @@ jobs:
           fi
           exit 0
 
-      - name: Upload build artifact
+      - name: Upload intermediate
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-android-aarch64
+          name: tmp-build-android-aarch64
           path: |
             out/
             logs/
           if-no-files-found: warn
+          retention-days: 1
 
-      - name: Mark job status
+      - name: Fail if build failed
         if: always()
         run: |
           if [ "${BUILD_EXIT}" != "0" ]; then
@@ -200,20 +204,18 @@ jobs:
             VERSION="dev-$(echo "${GITHUB_SHA}" | cut -c1-8)"
           fi
           echo "BUILD_VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "Final version: ${VERSION}"
 
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
 
-      - name: Assemble final zip
+      - name: Assemble final artifact
         run: |
           mkdir -p stage/logs
 
-          # Collect binaries (at root of zip)
           echo "=== Collecting binaries ==="
           for arch in amd64 aarch64 android-aarch64; do
-            BIN="artifacts/build-${arch}/out/MLK-${arch}-${BUILD_VERSION}"
+            BIN="artifacts/tmp-build-${arch}/out/MLK-${arch}-${BUILD_VERSION}"
             if [ -f "$BIN" ]; then
               cp "$BIN" stage/
               echo "  + MLK-${arch}-${BUILD_VERSION}"
@@ -222,25 +224,24 @@ jobs:
             fi
           done
 
-          # Collect logs
           echo "=== Collecting logs ==="
-          cp artifacts/build-*/logs/*.log stage/logs/ 2>/dev/null || true
+          cp artifacts/tmp-build-*/logs/*.log stage/logs/ 2>/dev/null || true
           ls -la stage/logs/
 
-          # Show final contents
-          echo "=== Final zip contents ==="
+          echo "=== Final contents ==="
           find stage -type f | sort
-
-          # Create zip
-          cd stage
-          zip -r "../MLK-${BUILD_VERSION}.zip" .
-          cd ..
-          echo ""
-          ls -lh "MLK-${BUILD_VERSION}.zip"
 
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:
           name: MLK-${{ env.BUILD_VERSION }}
-          path: MLK-${{ env.BUILD_VERSION }}.zip
+          path: stage/
           if-no-files-found: error
+
+      - name: Delete intermediate artifacts
+        uses: actions/delete-artifact@v4
+        with:
+          names: |
+            tmp-build-amd64
+            tmp-build-aarch64
+            tmp-build-android-aarch64
