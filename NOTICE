@@ -30,8 +30,8 @@ projects:
     Note: This is an independent Rust implementation, not a translation
           of the original Python source code.
 
-  cannon_logo_maker
-    URL: https://github.com/ELF-RC/cannon_logo_maker
-    Author: ELF-RC (same author as this project)
+  cannon_logo_maker (predecessor project, same author)
+    URL: https://github.com/ELF-RC/mtk_logo_toolkit/tree/stop-maintenance
+    Author: ELF-RC
     Used: Logo unpack/pack pipeline, image format handling, and
           resolution fitting logic.

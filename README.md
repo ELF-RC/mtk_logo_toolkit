@@ -175,7 +175,7 @@ The CERT2 blob is an ASN.1 DER-encoded certificate containing image header hash 
 ## Acknowledgments
 
 - [pwnage24mtk](https://github.com/kasnria001/pwnage24mtk) — CERT2 injection logic inspiration (independent Rust rewrite)
-- [cannon_logo_maker](https://github.com/ELF-RC/cannon_logo_maker) — Logo unpack/pack pipeline (same author)
+- [cannon_logo_maker](https://github.com/ELF-RC/mtk_logo_toolkit/tree/stop-maintenance) — Logo unpack/pack pipeline (same author, predecessor Python project)
 
 See [NOTICE](NOTICE) for details.
 

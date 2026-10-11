@@ -28,5 +28,5 @@ pub const VERSION: &str = "1.5-dev";
 pub const FULL_VERSION: &str = "1.5-dev
 Authors: ELF-RC
 License: GPL-3.0-or-later
-Repository: https://github.com/ELF-RC/cannon_logo_maker
+Repository: https://github.com/ELF-RC/mtk_logo_toolkit
 CVE: CVE-2023-20696 (legacy), CVE-2025-20730 (modern)";

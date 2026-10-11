@@ -175,7 +175,7 @@ CERT2 blob 是一个 ASN.1 DER 编码的证书，包含镜像头哈希和镜像�
 ## 致谢
 
 - [pwnage24mtk](https://github.com/kasnria001/pwnage24mtk) — CERT2 注入逻辑启发（独立 Rust 重写）
-- [cannon_logo_maker](https://github.com/ELF-RC/cannon_logo_maker) — Logo 解包/打包管线（同一作者）
+- [cannon_logo_maker](https://github.com/ELF-RC/mtk_logo_toolkit/tree/stop-maintenance) — Logo 解包/打包管线（同一作者，前代 Python 项目）
 
 详见 [NOTICE](NOTICE)。
 
