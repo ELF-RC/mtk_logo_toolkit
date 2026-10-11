@@ -181,8 +181,10 @@ The CERT2 blob is an ASN.1 DER-encoded certificate containing image header hash 
 | 249,200 | 178×350 |
 | 49,444 | 263×47 |
 | 36,864 | 72×128 |
+| 15,984 | 54×74 |
 | 14,592 | 57×64 |
 | 11,520 | 45×64 |
+| 7,056 | 42×42 |
 | 2,104 | 263×2 |
 
 > The table lists decompressed byte counts (BGRA32) and their corresponding
