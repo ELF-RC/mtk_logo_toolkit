@@ -237,11 +237,3 @@ jobs:
           name: MLK-${{ env.BUILD_VERSION }}
           path: stage/
           if-no-files-found: error
-
-      - name: Delete intermediate artifacts
-        uses: actions/delete-artifact@v4
-        with:
-          names: |
-            tmp-build-amd64
-            tmp-build-aarch64
-            tmp-build-android-aarch64
