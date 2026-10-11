@@ -21,11 +21,11 @@
 //! `--version` (long) prints the full banner; `-V` prints the short version.
 
 /// Short version string (shown by `-V`).
-pub const VERSION: &str = "1.5-dev";
+pub const VERSION: &str = "v1.6.0-release";
 
 /// Full version banner shown by `--version` (long form).
 /// Note: clap automatically prepends the program name, so we omit it here.
-pub const FULL_VERSION: &str = "1.5-dev
+pub const FULL_VERSION: &str = "v1.6.0-release
 Authors: ELF-RC
 License: GPL-3.0-or-later
 Repository: https://github.com/ELF-RC/mtk_logo_toolkit
