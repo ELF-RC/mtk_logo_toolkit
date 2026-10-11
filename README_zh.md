@@ -1,4 +1,4 @@
-# mtk-logo-toolkit
+# MTK LOGO ToolKit
 
 [English](README.md) | 中文
 
