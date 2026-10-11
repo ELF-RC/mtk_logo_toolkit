@@ -20,12 +20,11 @@ mod asn1_der;
 mod image_codec;
 mod logo_payload;
 mod cert_inject;
+mod version;
 
 use std::path::Path;
 use clap::{Parser, Subcommand};
 use cert_inject::BypassMode;
-
-const VERSION: &str = "1.5-dev";
 
 /// Returns the program basename from argv[0], for use in help hints.
 fn prog_name() -> String {
@@ -43,7 +42,10 @@ fn prog_name() -> String {
 
 /// MTK logo image toolchain: unpack / pack / install / build / verify
 #[derive(Parser)]
-#[command(version = VERSION)]
+#[command(
+    version = version::VERSION,
+    long_version = version::FULL_VERSION,
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Commands>,
