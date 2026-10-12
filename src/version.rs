@@ -21,7 +21,7 @@
 //! `--version` (long) prints the full banner; `-V` prints the short version.
 
 /// Short version string (shown by `-V`).
-pub const VERSION: &str = "v1.6.1-release";
+pub const VERSION: &str = "v1.6.5-release";
 
 /// Full version banner shown by `--version` (long form).
 /// Note: clap automatically prepends the program name, so we omit it here.
